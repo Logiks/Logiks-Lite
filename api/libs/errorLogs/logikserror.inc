@@ -35,7 +35,7 @@ class LogiksError {
     if($errorCode==null || !is_numeric($errorCode)) $errorCode=500;
 
     $errData=[
-        "site"=>SITENAME,
+        "site"=>defined("SITENAME")?SITENAME:"PRERROR",
         "domain"=>$_SERVER['HTTP_HOST'],
         "userid"=>"",
         "code"=>$errorCode,
@@ -71,10 +71,14 @@ class LogiksError {
   		$appStatus=ENV_STATUS;
   	}
   	
-  	if(SITENAME==WEBDOMAIN) {
-      $sitePath = "";
+    if(defined("SITENAME")) {
+      if(SITENAME==WEBDOMAIN) {
+        $sitePath = "";
+      } else {
+        $sitePath = "&site=".SITENAME;
+      }
     } else {
-      $sitePath = "&site=".SITENAME;
+      $sitePath = "";
     }
     
     //exit(_link("error/404","code={$errorCode}"));

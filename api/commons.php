@@ -36,6 +36,11 @@ if (!function_exists('printArray')) {
 			$s=_replace($s);
 		}
 		$s=str_replace("_"," ",$s);
+		
+		if(strtoupper($s)!=$s && strtolower($s)!=$s) {
+			$s = preg_replace("([A-Z])", " $0", $s);
+		}
+		
 		$s=strtolower($s);
 		$s=trim($s);
 		if(strlen($s)<=3) {
@@ -125,7 +130,11 @@ if (!function_exists('printArray')) {
 		return false;
 	}
 	function array_implode_associative ($glueWord, $glueMiddle,$array) {
-		array_walk($array, create_function('&$i,$k','$i=" $k'.$glueMiddle.'\"$i\"";'));
+		//array_walk($array, create_function('&$i,$k','$i=" $k'.$glueMiddle.'\"$i\"";'));
+		array_walk($array, function(&$i,$k) {
+			global $glueMiddle;
+			return $i="{$k}{$glueMiddle}\"{$i}\"";
+		});
 		return implode($glueWord,$array);
 
 	}
@@ -367,8 +376,8 @@ if(!function_exists("_session")) {
 	}
 	function isHTTPS() {
 		if(defined("FORCE_HTTPS")) {
-			if(FORCE_HTTPS===true || FORCE_HTTPS==="true") return true;
-	    }
+			if(FORCE_HTTPS===true || FORCE_HTTPS==="true" || FORCE_HTTPS==="1") return true;
+	  }
 		if(isset($_SERVER['HTTPS']) && !empty($_SERVER['HTTPS'])) {
 			return true;
 		}

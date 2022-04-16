@@ -165,35 +165,72 @@ class LogiksConfig {
     if($forceReload && isset(LogiksConfig::$CONFIGPARAMS['JSONCONFIG'][$configName])) {
     	unset(LogiksConfig::$CONFIGPARAMS['JSONCONFIG'][$configName]);
     }
+		//println ("A1 $configName ".isset(LogiksConfig::$CONFIGPARAMS['JSONCONFIG'][$configName]). defined("SITENAME"));
 
     if(isset(LogiksConfig::$CONFIGPARAMS['JSONCONFIG'][$configName])) {
     	$cfgData=LogiksConfig::$CONFIGPARAMS['JSONCONFIG'][$configName];
     } else {
-    	$f=ROOT.CFG_FOLDER."/jsonConfig/{$configName}.json";
-    	$f=str_replace("//","/",$f);
-		if(file_exists($f)) {
-			$data=file_get_contents($f);
-			if(function_exists("_replace")) $data=_replace($data);
-			if(strlen($data)>2) {
-				$json=json_decode($data,true);
-				$fData=array();
-				if(isset($json['GLOBALS'])) {
-					$fData[]=$json['GLOBALS'];
-				}
-				if(defined("SITENAME") && isset($json[SITENAME])) {
-					$fData[]=$json[SITENAME];
-				}
-				for ($i=1; $i <count($fData) ; $i++) {
-					$fData[0]=array_merge($fData[0],$fData[$i]);
-				}
-				$cfgData=$fData[0];
-				LogiksConfig::$CONFIGPARAMS['JSONCONFIG'][$configName]=$cfgData;
-			}
-		} else {
-	      trigger_logikserror("$configName configuration not found, Error In Installation.", E_USER_ERROR);
-	    }
+    	//println ("A1 $configName");
+    	if(defined("SITENAME")) {
+    		$fs = [
+    			ROOT.CFG_FOLDER."jsonConfig/{$configName}.json",
+    			ROOT.APPS_FOLDER.SITENAME."/".CFG_FOLDER."{$configName}.json",
+    		];
+    		
+    		foreach($fs as $f) {
+    			// println ("A1 $f");
+    			if(file_exists($f)) {
+						$data=file_get_contents($f);
+						if(function_exists("_replace")) $data=_replace($data);
+
+						if(strlen($data)>2) {
+							$json=json_decode($data,true);
+							$fData=array();
+							if(isset($json['GLOBALS'])) {
+								$fData[]=$json['GLOBALS'];
+							}
+							if(isset($json[SITENAME])) {
+								$fData[]=$json[SITENAME];
+							}
+							for ($i=1; $i <count($fData) ; $i++) {
+								$fData[0]=array_merge($fData[0],$fData[$i]);
+							}
+							$cfgData=array_merge($cfgData, $fData[0]);
+						}
+					} else {
+			      //trigger_logikserror("$configName configuration not found, Error In Installation.", E_USER_ERROR);
+			    }
+    		}
+    		LogiksConfig::$CONFIGPARAMS['JSONCONFIG'][$configName]=$cfgData;
+    	} else {
+				$f=ROOT.CFG_FOLDER."/jsonConfig/{$configName}.json";
+	    	$f=str_replace("//","/",$f);
+
+				if(file_exists($f)) {
+					$data=file_get_contents($f);
+					if(function_exists("_replace")) $data=_replace($data);
+					
+					if(strlen($data)>2) {
+						$json=json_decode($data,true);
+						$fData=array();
+						if(isset($json['GLOBALS'])) {
+							$fData[]=$json['GLOBALS'];
+						}
+						if(defined("SITENAME") && isset($json[SITENAME])) {
+							$fData[]=$json[SITENAME];
+						}
+						for ($i=1; $i <count($fData) ; $i++) {
+							$fData[0]=array_merge($fData[0],$fData[$i]);
+						}
+						$cfgData=$fData[0];
+						LogiksConfig::$CONFIGPARAMS['JSONCONFIG'][$configName]=$cfgData;
+					}
+				} else {
+		      //trigger_logikserror("$configName configuration not found, Error In Installation.", E_USER_ERROR);
+		    }
+    	}
     }
-	return $cfgData;
+		return $cfgData;
   }
 
   public static function loadFeature($moduleName,$forceReload=false,$debug=false) {

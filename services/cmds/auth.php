@@ -1,8 +1,11 @@
 <?php
 if(!defined('ROOT')) exit('No direct script access allowed');
 
-if(!isset($_REQUEST['mauth'])) {
+if(!isset($_REQUEST['mauth']) && !isset($_REQUEST['auth-policy'])) {
 	echo "<h5>Securing Access Authentication ... </h5>";
+}
+if(isset($_REQUEST['auth-policy'])) {
+	$_REQUEST['mauth'] = $_REQUEST['auth-policy'];
 }
 
 runHooks("preAuth");
@@ -15,6 +18,7 @@ $pwd=clean($_POST['password']);
 if(isset($_POST['site'])) $domain=$_POST['site']; 
 elseif(isset($_REQUEST['site'])) $domain=$_REQUEST['site']; 
 else $domain=SITENAME;
+
 
 loadConfigs(ROOT . "config/auth.cfg");
 include ROOT."api/helpers/pwdhash.php";
@@ -76,9 +80,17 @@ if(CASE_SENSITIVE_AUTH) {
 	}
 }
 
-$sql=_db(true)->_selectQ(_dbTable("users",true),"id, guid, userid, pwd, pwd_salt, privilegeid, accessid, groupid, name, email, mobile, region, country, zipcode, geolocation, geoip, tags, blocked, avatar, avatar_type")->_whereOR("expires",[
-			"0000-00-00",["NULL","NU"],["now()","GT"]
+$userColumns = _db(true)->get_columnList(_dbTable("users",true));
+
+if(in_array("roles",$userColumns)) {
+	$sql=_db(true)->_selectQ(_dbTable("users",true),"id, guid, userid, pwd, pwd_salt, privilegeid, accessid, groupid, name, email, mobile, region, country, zipcode, geolocation, geoip, tags, blocked, avatar, avatar_type, roles")->_whereOR("expires",[
+			["NULL","NU"],["now()","GT"]//"0000-00-00",["0000-00-00","EQ"],
 		])->_where($userFields,"AND","OR");
+} else {
+	$sql=_db(true)->_selectQ(_dbTable("users",true),"id, guid, userid, pwd, pwd_salt, privilegeid, accessid, groupid, name, email, mobile, region, country, zipcode, geolocation, geoip, tags, blocked, avatar, avatar_type")->_whereOR("expires",[
+			["NULL","NU"],["now()","GT"]//"0000-00-00",["0000-00-00","EQ"],
+		])->_where($userFields,"AND","OR");
+}
 
 $result=$sql->_get();
 
@@ -86,6 +98,17 @@ if(!empty($result)) {
 	$data=$result[0];
 } else {
 	relink("Sorry, you have not yet joined us or your userid has expired.",$domain);
+}
+
+if(!isset($data['roles']) || strlen($data['roles'])<=0) $data['roles'] = $data['privilegeid'];
+else {
+	$data['roles'] = explode(",", $data['roles']);
+	$data['roles'][] = $data['privilegeid'];
+	
+	if(strlen($data['roles'][0])<=0) unset($data['roles'][0]);
+
+	$data['roles'] = array_unique($data['roles']);
+	$data['roles'] = implode(",", $data['roles']);
 }
 
 // echo "{$data['pwd']} >>> $pwd >>> {$data['pwd_salt']}\n\n<br>";
@@ -144,18 +167,23 @@ if(!in_array($domain,$allSites)) {
 $_ENV['AUTH-DATA']=array_merge($data,$accessData);
 $_ENV['AUTH-DATA']=array_merge($_ENV['AUTH-DATA'],$privilegeData);
 
-$roleScopeData=_db(true)->_selectQ(_dbTable("rolescope",true),"*")->_where([
-		// "blocked"=>"false"
-	])->_whereRAW("(privilegeid='{$privilegeData['privilege_name']}' OR privilegeid='*')")
-		->_GET();
-if(!$roleScopeData) $roleScopeData = [];
+if(isset($_POST['policy_scope'])) {
+	$roleScopeData=_db(true)->_selectQ(_dbTable("rolescope",true),"*")->_where([
+			"blocked"=>"false",
+			"scope_id"=> $_POST['policy_scope']
+		])->_whereRAW("(privilegeid='{$privilegeData['privilege_name']}' OR privilegeid='*')")
+			->_GET();
+	if(!$roleScopeData) $roleScopeData = [];
+} else {
+	$roleScopeData = [];
+}
 
 $finalScope = [];
 foreach($roleScopeData as $row) {
-	if(!isset($finalScope[$row["module"]])) $finalScope[$row["module"]] = [];
+	if(!isset($finalScope[$row["scope_type"]])) $finalScope[$row["scope_type"]] = [];
 	$scopeData = json_decode($row['scope_params'], true);
 	if($scopeData) {
-		$finalScope[$row["module"]] = array_merge($finalScope[$row["module"]], $scopeData);
+		$finalScope[$row["scope_type"]] = array_merge($finalScope[$row["scope_type"]], $scopeData);
 	}
 }
 $_ENV['AUTH-DATA']['policies'] = $finalScope;
@@ -201,9 +229,9 @@ function relink($msg,$domain) {
         echo json_encode(["msg"=>$msg,"status"=>'failed']);
       } elseif($_REQUEST['mauth']=="authkey") {
         echo "ERROR:$msg";
-      } elseif($_REQUEST['mauth']=="jsonkey") {
+      } elseif($_REQUEST['mauth']=="jsonkey" || $_REQUEST['mauth']=="json") {
         header("Content-Type:text/json");
-        echo json_encode(["ERROR"=>$msg]);
+        echo json_encode(["msg"=>$msg,"status"=>'failed']);
       } else {
         echo "ERROR/$msg";
       }
@@ -315,6 +343,8 @@ function startNewSession($userid, $domain, $params=array()) {
 		$_SESSION['SESS_POLICY'] = [];
 	}
 
+	$_SESSION["SESS_ROLE_LIST"] = getUserRoleList($data['roles']);
+
 	$_SESSION['SESS_LOGIN_SITE'] = $domain;
 	$_SESSION['SESS_ACTIVE_SITE'] = $domain;
 	$_SESSION['SESS_TOKEN'] = session_id();
@@ -333,6 +363,10 @@ function startNewSession($userid, $domain, $params=array()) {
 	if(strlen($_SESSION['SESS_USER_NAME'])<=0) {
 		$_SESSION['SESS_USER_NAME']=$_SESSION['SESS_USER_ID'];
 	}
+	
+	if(isset($_POST['geolocation'])) {
+		$_SESSION['SESS_GEOLOCATION']=$_POST['geolocation'];
+	}
 
 	LogiksSession::getInstance(true);
 
@@ -345,7 +379,10 @@ function startNewSession($userid, $domain, $params=array()) {
 	setcookie("TOKEN", $_SESSION['SESS_TOKEN'], time()+36000,"/",null, isHTTPS());
 	setcookie("SITE", $_SESSION['SESS_LOGIN_SITE'], time()+36000,"/",null, isHTTPS());
 	
-	_db(true)->_deleteQ(_dbTable("cache_sessions",true),"created_on<DATE_SUB(NOW(), INTERVAL 1 MONTH)")->_RUN();
+	$cnt = _db(true)->_selectQ(_dbTable("cache_sessions",true),"count(*) as cnt","created_on<DATE_SUB(NOW(), INTERVAL 1 MONTH)")->_GET();
+	if($cnt[0]['cnt']>10000) {
+		_db(true)->_selectQ(_dbTable("cache_sessions",true),"created_on<DATE_SUB(NOW(), INTERVAL 1 MONTH)")->_RUN();
+	}
 	
 	if($data['persistant'] || (ALLOW_MAUTH && isset($_REQUEST['mauth']))) {
 		_db(true)->_deleteQ(_dbTable("cache_sessions",true),"edited_on<DATE_SUB(NOW(), INTERVAL 10 DAY)")
@@ -433,12 +470,15 @@ function gotoSuccessLink() {
             "mobile"=>$_SESSION['SESS_USER_CELL'],
             "email"=>$_SESSION['SESS_USER_EMAIL'],
             "country"=>$_SESSION['SESS_USER_COUNTRY'],
+            "zipcode"=>$_SESSION['SESS_USER_ZIPCODE'],
+            "geolocation"=>$_SESSION['SESS_USER_GEOLOC'],
 
             "privilegeid"=>$_SESSION['SESS_PRIVILEGE_ID'],
             "privilege_name"=>$_SESSION['SESS_PRIVILEGE_NAME'],
             "accessid"=>$_SESSION['SESS_ACCESS_ID'],
             "groupid"=>$_SESSION['SESS_GROUP_ID'],
             "access"=>$_SESSION['SESS_ACCESS_SITES'],
+            "rolelist"=>$_SESSION["SESS_ROLE_LIST"],
 
             "policies"=>isset($_SESSION['SESS_POLICY'])?$_SESSION['SESS_POLICY']:[],
 
@@ -448,34 +488,42 @@ function gotoSuccessLink() {
             "authkey"=>$_SESSION['MAUTH_KEY'],
             //"token"=>$_SESSION['SESS_TOKEN'],
 
-            "guid"=>$_SESSION['SESS_GUID'],
-            "privilegeid"=>$_SESSION['SESS_PRIVILEGE_ID'],
-            "privilege_name"=>$_SESSION['SESS_PRIVILEGE_NAME'],
-            "accessid"=>$_SESSION['SESS_ACCESS_ID'],
-            "groupid"=>$_SESSION['SESS_GROUP_ID'],
-
             "avatar"=>$_SESSION['SESS_USER_AVATAR'],
           );
           $jwt = new LogiksJWT();
           $jwtToken = $jwt->generateToken($arr);
           header("Content-Type:text/json");
-          echo json_encode(["token"=>$jwtToken,"msg"=>"Login Success","status"=>'success']);
-      } elseif($_REQUEST['mauth']=="jsonkey") {
+          echo json_encode([
+          	"token"=>$jwtToken,
+          	"msg"=>"Login Success",
+          	"status"=>'success',
+          	"token-refresh"=>_service("auth-refresh",false,false,false,SITENAME,false)
+          ]);
+      } elseif($_REQUEST['mauth']=="jsonkey" || $_REQUEST['mauth']=="json") {
         $arr=array(
+        		"guid"=>$_SESSION['SESS_GUID'],
+        		"username"=>$_SESSION['SESS_USER_NAME'],
+
             "user"=>$_SESSION['SESS_USER_ID'],
             "mobile"=>$_SESSION['SESS_USER_CELL'],
             "email"=>$_SESSION['SESS_USER_EMAIL'],
             "country"=>$_SESSION['SESS_USER_COUNTRY'],
+            "zipcode"=>$_SESSION['SESS_USER_ZIPCODE'],
+            "geolocation"=>$_SESSION['SESS_USER_GEOLOC'],
 
             "date"=>date("Y-m-d"),
             "time"=>date("H:i:s"),
             "site"=>$domain,
             "client"=>_server('REMOTE_ADDR'),
             "authkey"=>$_SESSION['MAUTH_KEY'],
-//             "token"=>$_SESSION['SESS_TOKEN'],
+            //"token"=>$_SESSION['SESS_TOKEN'],
 
-            "username"=>$_SESSION['SESS_USER_NAME'],
+            
             "avatar"=>$_SESSION['SESS_USER_AVATAR'],
+					
+					  
+            "privilege_name"=>$_SESSION['SESS_PRIVILEGE_NAME'],
+					  "group_name"=>$_SESSION['SESS_GROUP_NAME'],
 
             "policies"=>isset($_SESSION['SESS_POLICY'])?$_SESSION['SESS_POLICY']:[],
           );
